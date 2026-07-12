@@ -35,6 +35,7 @@ Each workspace has its own SQLite database, downloaded assets, reports, and audi
 
 	cmd.AddCommand(newCreateCmd(c))
 	cmd.AddCommand(newListCmd(c))
+	cmd.AddCommand(newResumeCmd(c))
 	cmd.AddCommand(newDeleteCmd(c))
 	cmd.AddCommand(newInfoCmd(c))
 
@@ -55,6 +56,7 @@ func customHelpFunc(c *container.Container) func(*cobra.Command, []string) {
 			cmds := []struct{ name, desc string }{
 				{"create", "Create a new reconnaissance workspace"},
 				{"list", "List all workspaces"},
+				{"resume", "Resume and verify a workspace"},
 				{"delete", "Permanently delete a workspace"},
 				{"info", "Show detailed workspace information"},
 			}
@@ -105,53 +107,6 @@ Example:
 	return cmd
 }
 
-func runCreate(ctx context.Context, c *container.Container, name, target string) error {
-	ui.PrintBanner()
-
-	term := c.UI
-	term.Header("Creating Workspace")
-	term.Divider()
-	term.Blank()
-
-	ws, err := c.Workspace.Create(name, target)
-	if err != nil {
-		term.Error("Failed to create workspace: " + err.Error())
-		return fmt.Errorf("workspace create: %w", err)
-	}
-
-	db, err := storage.Open(ctx, ws.DBPath())
-	if err != nil {
-		term.Error("Workspace directories created but database initialisation failed: " + err.Error())
-		return fmt.Errorf("workspace create: db: %w", err)
-	}
-	_ = db.Close()
-
-	term.StatusRow(true, "Workspace directory", ws.Root)
-	term.StatusRow(true, "SQLite database", ws.DBPath()+" (migrations applied)")
-	term.StatusRow(true, "Assets directory", ws.AssetsPath())
-	term.StatusRow(true, "Reports directory", ws.ReportsPath())
-	term.Blank()
-	term.Divider()
-	term.Blank()
-
-	term.Success("Workspace created successfully.")
-	term.Blank()
-
-	term.Table([][2]string{
-		{"ID", ui.StyleAccent.Render(ws.ID)},
-		{"Name", ui.StyleBold.Render(ws.Name)},
-		{"Target", ui.StylePrimary.Render(ws.Target)},
-		{"Created", ws.CreatedAt.Format("2006-01-02 15:04:05 UTC")},
-		{"Root", ws.Root},
-	})
-
-	term.Blank()
-	term.Info("Run `nasij workspace list` to see all workspaces.")
-	term.Blank()
-
-	return nil
-}
-
 func newListCmd(c *container.Container) *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
@@ -192,6 +147,54 @@ func runList(ctx context.Context, c *container.Container) error {
 		})
 		term.Blank()
 	}
+
+	return nil
+}
+
+func newResumeCmd(c *container.Container) *cobra.Command {
+	return &cobra.Command{
+		Use:   "resume <id>",
+		Short: "Resume and verify a workspace",
+		Long: `Verify a workspace's directory structure and content integrity,
+then set its status back to idle for scanning.
+
+Recreates any missing subdirectories on the next scan. Reports integrity
+warnings if workspace metadata has been externally modified.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runResume(c, args[0])
+		},
+	}
+}
+
+func runResume(c *container.Container, id string) error {
+	ui.PrintBanner()
+	term := c.UI
+
+	term.Header("Resuming Workspace")
+	term.Divider()
+	term.Blank()
+
+	ws, err := c.Workspace.Resume(id)
+	if err != nil {
+		term.Warning("Integrity issues: " + err.Error())
+		term.Blank()
+		term.Info("Run `nasij workspace info " + id[:8] + "` to inspect workspace state.")
+		term.Blank()
+		return nil
+	}
+
+	term.StatusRow(true, "Workspace", ws.Name)
+	term.StatusRow(true, "Status", ws.Status)
+	term.StatusRow(true, "Target", ws.Target)
+	term.Blank()
+	term.Divider()
+	term.Blank()
+
+	term.Success("Workspace verified and ready.")
+	term.Blank()
+	term.Info("Run `nasij scan` to start a scan on this workspace.")
+	term.Blank()
 
 	return nil
 }
@@ -247,11 +250,22 @@ func runInfo(c *container.Container, id string) error {
 	term.Divider()
 	term.Blank()
 
+	statusStyle := ui.StyleSuccess
+	if ws.Status == "scanning" {
+		statusStyle = ui.StylePrimary
+	} else if ws.Status == "error" {
+		statusStyle = ui.StyleDanger
+	} else if ws.Status == "paused" {
+		statusStyle = ui.StyleWarning
+	}
 	term.Table([][2]string{
 		{"ID", ui.StyleAccent.Render(ws.ID)},
 		{"Name", ui.StyleBold.Render(ws.Name)},
 		{"Target", ui.StylePrimary.Render(ws.Target)},
+		{"Status", statusStyle.Render(ws.Status)},
+		{"Version", ui.StyleMuted.Render(fmt.Sprintf("v%d", ws.Version))},
 		{"Created", ws.CreatedAt.Format("2006-01-02 15:04:05 UTC")},
+		{"Modified", ws.ModifiedAt.Format("2006-01-02 15:04:05 UTC")},
 		{"Scans", fmt.Sprintf("%d", ws.ScanCount)},
 		{"Root", ws.Root},
 	})
@@ -263,7 +277,18 @@ func runInfo(c *container.Container, id string) error {
 		{"Assets", ws.AssetsPath()},
 		{"Reports", ws.ReportsPath()},
 		{"Logs", ws.LogsPath()},
+		{"Cache", ws.CachePath()},
+		{"Screenshots", ws.ScreenshotsPath()},
+		{"Snapshots", ws.SnapshotsPath()},
 	})
+
+	if ws.Hash != "" {
+		term.Blank()
+		term.Subheader("  Integrity")
+		term.Table([][2]string{
+			{"Hash", ui.StyleMuted.Render(ws.Hash[:16] + "...")},
+		})
+	}
 
 	term.Blank()
 	term.Divider()
@@ -274,4 +299,54 @@ func runInfo(c *container.Container, id string) error {
 	return nil
 }
 
+func runCreate(ctx context.Context, c *container.Container, name, target string) error {
+	ui.PrintBanner()
 
+	term := c.UI
+	term.Header("Creating Workspace")
+	term.Divider()
+	term.Blank()
+
+	ws, err := c.Workspace.Create(name, target)
+	if err != nil {
+		term.Error("Failed to create workspace: " + err.Error())
+		return fmt.Errorf("workspace create: %w", err)
+	}
+
+	db, err := storage.Open(ctx, ws.DBPath())
+	if err != nil {
+		term.Error("Workspace directories created but database initialisation failed: " + err.Error())
+		return fmt.Errorf("workspace create: db: %w", err)
+	}
+	_ = db.Close()
+
+	term.StatusRow(true, "Workspace directory", ws.Root)
+	term.StatusRow(true, "SQLite database", ws.DBPath()+" (migrations applied)")
+	term.StatusRow(true, "Assets directory", ws.AssetsPath())
+	term.StatusRow(true, "Reports directory", ws.ReportsPath())
+	term.StatusRow(true, "Cache directory", ws.CachePath())
+	term.StatusRow(true, "Screenshots directory", ws.ScreenshotsPath())
+	term.StatusRow(true, "Snapshots directory", ws.SnapshotsPath())
+	term.Blank()
+	term.Divider()
+	term.Blank()
+
+	term.Success("Workspace created successfully.")
+	term.Blank()
+
+	term.Table([][2]string{
+		{"ID", ui.StyleAccent.Render(ws.ID)},
+		{"Name", ui.StyleBold.Render(ws.Name)},
+		{"Target", ui.StylePrimary.Render(ws.Target)},
+		{"Status", ui.StyleSuccess.Render(ws.Status)},
+		{"Version", ui.StyleMuted.Render(fmt.Sprintf("v%d", ws.Version))},
+		{"Created", ws.CreatedAt.Format("2006-01-02 15:04:05 UTC")},
+		{"Root", ws.Root},
+	})
+
+	term.Blank()
+	term.Info("Run `nasij workspace list` to see all workspaces.")
+	term.Blank()
+
+	return nil
+}

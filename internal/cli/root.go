@@ -3,6 +3,7 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
+	scopecmd "github.com/nasij/nasij/internal/cli/scope"
 	workspacecmd "github.com/nasij/nasij/internal/cli/workspace"
 	"github.com/nasij/nasij/internal/container"
 )
@@ -28,6 +29,7 @@ func NewRoot(c *container.Container) *cobra.Command {
 		newScanCmd(c),
 		newCrawlCmd(c),
 		workspacecmd.NewWorkspaceCmd(c),
+		scopecmd.NewScopeCmd(c),
 		newConfigCmd(c),
 		newPluginsCmd(c),
 		newReportCmd(c),

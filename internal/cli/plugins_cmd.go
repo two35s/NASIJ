@@ -111,5 +111,3 @@ func runPluginsInfo(c *container.Container, name string) error {
 
 	return nil
 }
-
-

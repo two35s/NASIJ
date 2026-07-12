@@ -38,6 +38,8 @@ func TestOpen_RunsMigrations(t *testing.T) {
 	tables := []string{
 		"schema_version", "workspaces", "audit_log",
 		"js_assets", "api_records", "findings",
+		"snapshots", "asset_blobs",
+		"scope_entries", "scope_config",
 	}
 	for _, table := range tables {
 		var name string
@@ -63,11 +65,11 @@ func TestOpen_MigrationsAreIdempotent(t *testing.T) {
 	require.NoError(t, err)
 	defer db2.Close()
 
-	// schema_version should have exactly 1 row (one migration applied)
+	// schema_version should have exactly 2 rows (two migrations applied)
 	var count int
 	err = db2.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_version`).Scan(&count)
 	require.NoError(t, err)
-	assert.Equal(t, 1, count)
+	assert.Equal(t, 3, count)
 }
 
 func TestDB_Ping(t *testing.T) {

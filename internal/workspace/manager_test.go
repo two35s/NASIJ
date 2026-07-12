@@ -2,6 +2,7 @@ package workspace_test
 
 import (
 	"errors"
+	"os"
 	"testing"
 	"time"
 
@@ -47,6 +48,9 @@ func TestManager_Create_DirectoryStructure(t *testing.T) {
 	require.DirExists(t, ws.AssetsPath())
 	require.DirExists(t, ws.ReportsPath())
 	require.DirExists(t, ws.LogsPath())
+	require.DirExists(t, ws.CachePath())
+	require.DirExists(t, ws.ScreenshotsPath())
+	require.DirExists(t, ws.SnapshotsPath())
 
 	// meta.json must be written
 	require.FileExists(t, ws.Root+"/meta.json")
@@ -142,4 +146,97 @@ func TestWorkspace_Paths(t *testing.T) {
 	assert.Equal(t, ws.Root+"/assets", ws.AssetsPath())
 	assert.Equal(t, ws.Root+"/reports", ws.ReportsPath())
 	assert.Equal(t, ws.Root+"/logs", ws.LogsPath())
+	assert.Equal(t, ws.Root+"/cache", ws.CachePath())
+	assert.Equal(t, ws.Root+"/screenshots", ws.ScreenshotsPath())
+	assert.Equal(t, ws.Root+"/snapshots", ws.SnapshotsPath())
+}
+
+func TestManager_Create_HasMetadata(t *testing.T) {
+	m := newTestManager(t)
+	ws, err := m.Create("meta-test", "https://example.com")
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, ws.Version, "schema version should be 2")
+	assert.NotEmpty(t, ws.Hash, "content hash should be set")
+	assert.Equal(t, "idle", ws.Status)
+	assert.False(t, ws.ModifiedAt.IsZero())
+	assert.NotEmpty(t, ws.ContentHash())
+}
+
+func TestManager_Resume_Healthy(t *testing.T) {
+	m := newTestManager(t)
+	ws, err := m.Create("resume-test", "https://example.com")
+	require.NoError(t, err)
+
+	rws, err := m.Resume(ws.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "idle", rws.Status)
+	assert.Equal(t, ws.Name, rws.Name)
+}
+
+func TestManager_Resume_MissingDir(t *testing.T) {
+	m := newTestManager(t)
+	ws, err := m.Create("resume-missing", "https://example.com")
+	require.NoError(t, err)
+
+	require.NoError(t, os.RemoveAll(ws.AssetsPath()))
+
+	_, err = m.Resume(ws.ID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "integrity check failed")
+}
+
+func TestManager_SetStatus(t *testing.T) {
+	m := newTestManager(t)
+	ws, err := m.Create("status-test", "https://example.com")
+	require.NoError(t, err)
+
+	require.NoError(t, m.SetStatus(ws.ID, "scanning"))
+
+	updated, err := m.Open(ws.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "scanning", updated.Status)
+}
+
+func TestManager_UpdateMeta(t *testing.T) {
+	m := newTestManager(t)
+	ws, err := m.Create("update-test", "https://example.com")
+	require.NoError(t, err)
+
+	oldHash := ws.Hash
+	ws.Name = "renamed"
+	require.NoError(t, m.UpdateMeta(ws))
+
+	updated, err := m.Open(ws.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "renamed", updated.Name)
+	assert.NotEqual(t, oldHash, updated.Hash, "hash should change after rename")
+}
+
+func TestManager_IncrementScanCount(t *testing.T) {
+	m := newTestManager(t)
+	ws, err := m.Create("scancount-test", "https://example.com")
+	require.NoError(t, err)
+	assert.Equal(t, 0, ws.ScanCount)
+
+	require.NoError(t, m.IncrementScanCount(ws.ID))
+	require.NoError(t, m.IncrementScanCount(ws.ID))
+
+	updated, err := m.Open(ws.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 2, updated.ScanCount)
+	assert.NotNil(t, updated.LastScanAt)
+}
+
+func TestWorkspace_ContentHash_ChangesWithFields(t *testing.T) {
+	ws1 := &workspace.Workspace{
+		ID: "a", Name: "test", Target: "https://example.com", Root: "/tmp/ws",
+		Version: 2,
+	}
+	ws2 := &workspace.Workspace{
+		ID: "b", Name: "test", Target: "https://example.com", Root: "/tmp/ws",
+		Version: 2,
+	}
+
+	assert.NotEqual(t, ws1.ContentHash(), ws2.ContentHash(), "different IDs should produce different hashes")
 }

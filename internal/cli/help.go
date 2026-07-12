@@ -59,10 +59,10 @@ func renderRootHelp(w io.Writer, cmd *cobra.Command) {
 
 	fmt.Fprintln(w, "  "+ui.StyleHeader.Render("EXAMPLES"))
 	for _, ex := range []string{
-		"  "+ui.StyleAccent.Render("$ nasij init"),
-		"  "+ui.StyleAccent.Render("$ nasij doctor"),
-		"  "+ui.StyleAccent.Render("$ nasij workspace create --name my-project --target https://example.com"),
-		"  "+ui.StyleAccent.Render("$ nasij scan --target https://example.com --scope scope.yaml"),
+		"  " + ui.StyleAccent.Render("$ nasij init"),
+		"  " + ui.StyleAccent.Render("$ nasij doctor"),
+		"  " + ui.StyleAccent.Render("$ nasij workspace create --name my-project --target https://example.com"),
+		"  " + ui.StyleAccent.Render("$ nasij scan --target https://example.com --scope scope.yaml"),
 	} {
 		fmt.Fprintln(w, ex)
 	}
@@ -113,5 +113,3 @@ func renderSubHelp(w io.Writer, cmd *cobra.Command) {
 		fmt.Fprintln(w)
 	}
 }
-
-

@@ -17,9 +17,9 @@ type fakePlugin struct {
 	kind    plugin.Kind
 }
 
-func (f *fakePlugin) Name() string    { return f.name }
-func (f *fakePlugin) Version() string { return f.version }
-func (f *fakePlugin) Kind() plugin.Kind { return f.kind }
+func (f *fakePlugin) Name() string                                   { return f.name }
+func (f *fakePlugin) Version() string                                { return f.version }
+func (f *fakePlugin) Kind() plugin.Kind                              { return f.kind }
 func (f *fakePlugin) Init(_ context.Context, _ map[string]any) error { return nil }
 
 func newFake(name string, kind plugin.Kind) *fakePlugin {

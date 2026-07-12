@@ -13,11 +13,11 @@ import (
 
 func newCrawlCmd(c *container.Container) *cobra.Command {
 	var (
-		target      string
-		concurrency int
-		rateLimit   int
-		depth       int
-		maxPages    int
+		target        string
+		concurrency   int
+		rateLimit     int
+		depth         int
+		maxPages      int
 		respectRobots bool
 	)
 

@@ -122,5 +122,3 @@ func runScanDemo(term *ui.Terminal) {
 	term.Info(ui.StyleMuted.Render("Full scanning will be implemented in Phase 2."))
 	term.Blank()
 }
-
-

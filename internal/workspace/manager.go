@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,22 +14,15 @@ import (
 	"go.uber.org/zap"
 )
 
-// ErrNotFound is returned when a workspace cannot be located by ID.
 var ErrNotFound = errors.New("workspace not found")
 
-// Manager handles the full lifecycle of workspaces:
-// create, open, list, and delete.
-//
-// Each workspace is stored as a subdirectory of the root path, named by
-// the workspace UUID. A meta.json file at the root of each workspace
-// directory allows fast listing without opening any database.
+const metaFilename = "meta.json"
+
 type Manager struct {
 	root string
 	log  *zap.Logger
 }
 
-// NewManager returns a Manager rooted at root.
-// root and its parents are created with permissions 0750 if they do not exist.
 func NewManager(root string, log *zap.Logger) (*Manager, error) {
 	if err := os.MkdirAll(root, 0o750); err != nil {
 		return nil, fmt.Errorf("workspace manager: create root %q: %w", root, err)
@@ -36,9 +30,25 @@ func NewManager(root string, log *zap.Logger) (*Manager, error) {
 	return &Manager{root: root, log: log}, nil
 }
 
-// Create provisions a new workspace for the given name and target URL.
-// It creates the workspace directory tree and writes meta.json.
-// The caller is responsible for opening and migrating the SQLite database.
+// createDirs creates all subdirectories for a workspace root.
+func createDirs(root string) error {
+	dirs := []string{
+		root,
+		filepath.Join(root, "assets"),
+		filepath.Join(root, "reports"),
+		filepath.Join(root, "logs"),
+		filepath.Join(root, "cache"),
+		filepath.Join(root, "screenshots"),
+		filepath.Join(root, "snapshots"),
+	}
+	for _, d := range dirs {
+		if err := os.MkdirAll(d, 0o750); err != nil {
+			return fmt.Errorf("mkdir %q: %w", d, err)
+		}
+	}
+	return nil
+}
+
 func (m *Manager) Create(name, target string) (*Workspace, error) {
 	if name == "" {
 		return nil, fmt.Errorf("workspace create: name must not be empty")
@@ -50,27 +60,24 @@ func (m *Manager) Create(name, target string) (*Workspace, error) {
 	id := uuid.New().String()
 	root := filepath.Join(m.root, id)
 
-	dirs := []string{
-		root,
-		filepath.Join(root, "assets"),
-		filepath.Join(root, "reports"),
-		filepath.Join(root, "logs"),
-	}
-	for _, d := range dirs {
-		if err := os.MkdirAll(d, 0o750); err != nil {
-			_ = os.RemoveAll(root) // best-effort cleanup
-			return nil, fmt.Errorf("workspace create: mkdir %q: %w", d, err)
-		}
+	if err := createDirs(root); err != nil {
+		_ = os.RemoveAll(root)
+		return nil, fmt.Errorf("workspace create: %w", err)
 	}
 
+	now := time.Now().UTC()
 	ws := &Workspace{
-		ID:        id,
-		Name:      name,
-		Target:    target,
-		Root:      root,
-		CreatedAt: time.Now().UTC(),
-		ScanCount: 0,
+		ID:         id,
+		Name:       name,
+		Target:     target,
+		Root:       root,
+		Version:    SchemaVersion,
+		Status:     StatusIdle,
+		CreatedAt:  now,
+		ModifiedAt: now,
+		ScanCount:  0,
 	}
+	ws.Hash = ws.ContentHash()
 
 	if err := m.writeMeta(ws); err != nil {
 		_ = os.RemoveAll(root)
@@ -87,15 +94,102 @@ func (m *Manager) Create(name, target string) (*Workspace, error) {
 	return ws, nil
 }
 
-// Open loads an existing workspace by ID from meta.json.
-// Returns ErrNotFound if the workspace directory or meta.json does not exist.
+// Open loads a workspace by ID. Returns ErrNotFound if it does not exist.
 func (m *Manager) Open(id string) (*Workspace, error) {
 	return m.readMeta(id)
 }
 
-// List returns all workspaces under the root directory,
-// sorted by creation time (newest first).
-// Workspaces with unreadable meta.json are skipped with a warning.
+// Resume opens a workspace and verifies its directory structure is intact.
+// Returns the workspace and any integrity warnings.
+func (m *Manager) Resume(id string) (*Workspace, error) {
+	ws, err := m.readMeta(id)
+	if err != nil {
+		return nil, err
+	}
+
+	var warnings []string
+
+	for _, dir := range []string{
+		ws.Root,
+		ws.AssetsPath(),
+		ws.ReportsPath(),
+		ws.LogsPath(),
+		ws.CachePath(),
+		ws.ScreenshotsPath(),
+		ws.SnapshotsPath(),
+	} {
+		info, err := os.Stat(dir)
+		if os.IsNotExist(err) {
+			warnings = append(warnings, "missing directory: "+dir)
+			continue
+		}
+		if err != nil {
+			warnings = append(warnings, "stat error: "+dir+": "+err.Error())
+			continue
+		}
+		if !info.IsDir() {
+			warnings = append(warnings, "not a directory: "+dir)
+		}
+	}
+
+	// Verify content hash
+	if ws.Hash != "" && ws.ContentHash() != ws.Hash {
+		warnings = append(warnings, "content hash mismatch — metadata may have been modified externally")
+	}
+
+	if len(warnings) > 0 {
+		m.log.Warn("workspace resume: integrity warnings",
+			zap.String("id", id),
+			zap.Strings("warnings", warnings),
+		)
+		ws.Status = StatusError
+		_ = m.writeMeta(ws)
+		return ws, fmt.Errorf("workspace resume %q: integrity check failed: %v", id, warnings)
+	}
+
+	m.log.Info("workspace resumed",
+		zap.String("id", id),
+		zap.String("name", ws.Name),
+	)
+
+	ws.Status = StatusIdle
+	ws.ModifiedAt = time.Now().UTC()
+	_ = m.writeMeta(ws)
+
+	return ws, nil
+}
+
+// UpdateMeta persists the current workspace metadata to disk.
+func (m *Manager) UpdateMeta(ws *Workspace) error {
+	ws.ModifiedAt = time.Now().UTC()
+	ws.Hash = ws.ContentHash()
+	return m.writeMeta(ws)
+}
+
+// SetStatus updates the workspace status and persists metadata.
+func (m *Manager) SetStatus(id, status string) error {
+	ws, err := m.readMeta(id)
+	if err != nil {
+		return err
+	}
+	ws.Status = status
+	ws.ModifiedAt = time.Now().UTC()
+	ws.Hash = ws.ContentHash()
+	return m.writeMeta(ws)
+}
+
+// IncrementScanCount increments the scan counter and sets last scan timestamp.
+func (m *Manager) IncrementScanCount(id string) error {
+	ws, err := m.readMeta(id)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	ws.LastScanAt = &now
+	ws.ScanCount++
+	return m.UpdateMeta(ws)
+}
+
 func (m *Manager) List() ([]*Workspace, error) {
 	entries, err := os.ReadDir(m.root)
 	if err != nil {
@@ -128,8 +222,6 @@ func (m *Manager) List() ([]*Workspace, error) {
 	return workspaces, nil
 }
 
-// Delete permanently removes a workspace directory and all its contents.
-// Returns ErrNotFound if the workspace does not exist.
 func (m *Manager) Delete(id string) error {
 	root := filepath.Join(m.root, id)
 	if _, err := os.Stat(root); os.IsNotExist(err) {
@@ -142,14 +234,14 @@ func (m *Manager) Delete(id string) error {
 	return nil
 }
 
-// Root returns the workspace root directory managed by this Manager.
 func (m *Manager) Root() string { return m.root }
 
 // --- private helpers ---
 
-const metaFilename = "meta.json"
-
 func (m *Manager) writeMeta(ws *Workspace) error {
+	if ws.Hash == "" {
+		ws.Hash = ws.ContentHash()
+	}
 	path := filepath.Join(ws.Root, metaFilename)
 	data, err := json.MarshalIndent(ws, "", "  ")
 	if err != nil {
@@ -175,6 +267,16 @@ func (m *Manager) readMeta(id string) (*Workspace, error) {
 	if err := json.Unmarshal(data, &ws); err != nil {
 		return nil, fmt.Errorf("workspace meta decode %q: %w", path, err)
 	}
-
 	return &ws, nil
+}
+
+// NewID generates a new workspace ID (UUID v4).
+func NewID() string {
+	return uuid.New().String()
+}
+
+// ComputeHash returns a SHA-256 hash of the raw data.
+func ComputeHash(data []byte) string {
+	h := sha256.Sum256(data)
+	return fmt.Sprintf("%x", h)
 }
