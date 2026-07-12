@@ -1,0 +1,21 @@
+# NASIJ Default Configuration
+# This file documents every available setting.
+# Copy to ~/.nasij/config.yaml and customise.
+# Environment variable override: NASIJ_<KEY> (e.g. NASIJ_LOG_LEVEL=debug)
+
+# Logging
+log_level: info      # debug | info | warn | error
+log_format: pretty   # pretty | json
+
+# Workspace
+workspace_root: ~/.nasij/workspaces
+
+# Database (per-workspace SQLite)
+db:
+  max_open_conns: 1
+  max_idle_conns: 1
+
+# Plugin system
+plugin:
+  dir: plugins       # directory scanned for .so plugin files
+  enabled: true

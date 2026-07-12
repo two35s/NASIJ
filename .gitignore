@@ -1,0 +1,41 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+dist/
+
+# Test binaries
+*.test
+*.out
+
+# Go workspace files
+go.work
+go.work.sum
+
+# Module download cache
+vendor/
+
+# Build artifacts
+coverage.out
+coverage.html
+
+# NASIJ runtime data
+workspace/*/
+*.db
+*.db-shm
+*.db-wal
+.nasij/
+
+# Editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Secrets / scope files with credentials
+*.secret.yaml
+*.secret.json

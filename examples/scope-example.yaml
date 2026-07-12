@@ -1,0 +1,32 @@
+# NASIJ Scope Definition — Example
+# Use with: nasij scan --scope scope-example.yaml --target https://example.com
+#
+# IMPORTANT: Only scan targets you are explicitly authorized to test.
+
+target: https://example.com
+
+allowed_domains:
+  - example.com
+  - api.example.com
+  - static.example.com
+
+excluded_domains:
+  - partner.example.com  # Out of scope per engagement rules
+
+excluded_paths:
+  - /logout
+  - /admin/delete
+  - /api/v1/reset-password
+
+# Politeness settings
+respect_robots: true       # Always true unless explicitly overridden
+max_depth: 3               # Maximum crawl depth from entry point
+max_pages: 200             # Hard cap on pages visited
+rps: 2                     # Requests per second (conservative default)
+concurrency: 4             # Parallel worker count
+
+# Authorization evidence (for your records — not sent anywhere)
+authorization:
+  type: bug_bounty          # bug_bounty | pentest | internal
+  program: HackerOne        # Program / client name
+  scope_url: https://hackerone.com/example-program
