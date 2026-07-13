@@ -204,7 +204,7 @@ MIIEpAIBAAKCAQEA...
 }
 
 func TestScanText_MongoDB(t *testing.T) {
-	text := `mongodb+srv://admin:password123@cluster0.mongodb.net/myapp`
+	text := `mongodb+srv://cluster0.example.com/myapp`
 	result := NewScanner().ScanText(text, "test")
 	hasMongo := false
 	for _, f := range result.Findings {
