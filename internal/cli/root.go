@@ -28,6 +28,8 @@ func NewRoot(c *container.Container) *cobra.Command {
 		newInitCmd(c),
 		newScanCmd(c),
 		newCrawlCmd(c),
+		newAuthCmd(c),
+		newSecretsCmd(c),
 		workspacecmd.NewWorkspaceCmd(c),
 		scopecmd.NewScopeCmd(c),
 		newConfigCmd(c),
